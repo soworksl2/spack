@@ -1,0 +1,215 @@
+#!/usr/bin/python3
+
+import sys
+from argparse import ArgumentParser, Namespace
+from functools import reduce
+from enum import Enum, IntFlag, auto
+from typing import Optional
+
+
+class Operation(Enum):
+    COMPRESS=auto()
+    DECOMPRESS=auto()
+
+class FormatCategory(IntFlag):
+    #Order matters
+    ARCHIVING=auto()
+    COMPRESING=auto()
+    ENCRYPTING=auto()
+    ALL=ARCHIVING | COMPRESING | ENCRYPTING
+
+    def sub_and_normalize(self, other: 'FormatCategory') -> 'FormatCategory':
+        new: FormatCategory = self & (~other)
+        if not (new & FormatCategory.ARCHIVING):
+            return FormatCategory(0)
+        elif not (new & FormatCategory.COMPRESING):
+            return FormatCategory.ARCHIVING
+        else:
+            return new
+
+class Format:
+    def __init__(self, name: str, category: FormatCategory) -> None:
+        self.name: str = name
+        self.category: FormatCategory = category
+
+    def __repr__(self) -> str:
+        return self.name
+
+class FormatManager:
+    def __init__(self) -> None:
+        self._formats: list[Format] = []
+        self._exts_formats: dict[str, list[Format]] = {}
+
+    def add_format(self, fmt: str, category: FormatCategory) -> Format:
+        f: Format = Format(fmt, category)
+        self._formats.append(f)
+        return f
+
+    def _add_ext(self, ext: str, fmts: list[Format]) -> None:
+        assert not ext in self._exts_formats, f'"{ext}" was specified twice'
+
+        self._exts_formats[ext] = fmts
+
+    def add_exts(self, exts: list[str], fmts: list[Format]) -> None:
+        assert fmts, f'the formats for "{exts}" was not specified'
+        for ext in exts:
+            self._add_ext(ext, fmts)
+
+    def detect_formats(self, format_filename: str) -> list[Format]:
+        format_filename = format_filename.strip()
+        if not format_filename:
+            return []
+        fmts: list[Format] = []
+        exts: list[str] = format_filename.split('.')[1:]
+        exts.reverse()
+        category_left: FormatCategory = FormatCategory.ALL
+        for ext in exts:
+            cfmts: list[Format] = self._exts_formats.get(ext, [])
+            ccatg_found: FormatCategory = reduce(lambda f, n: f | n.category, cfmts, FormatCategory(0))
+
+            if not cfmts:
+                break
+            catg_conflict: bool = int(ccatg_found) > int(category_left)
+            if catg_conflict:
+                break
+
+            fmts = cfmts + fmts
+            category_left = category_left.sub_and_normalize(ccatg_found)
+
+        return fmts
+
+# ####################
+# Constants
+# ####################
+
+PROG_NAME: str = 'spack'
+PROG_DESC: str = 'A tool to unify all archiving, compressing, encription tools'
+PROG_VERSION: str = '0.0.1'
+PROG_REPOSITORY: str = 'https://github.com/soworksl2/spack'
+
+FM: FormatManager = FormatManager()
+tar_fm: Format = FM.add_format('tar', FormatCategory.ARCHIVING)
+gzip_fm: Format = FM.add_format('gzip', FormatCategory.COMPRESING)
+xz_fm: Format = FM.add_format('xz', FormatCategory.COMPRESING)
+bzip2_fm: Format = FM.add_format('bzip2', FormatCategory.COMPRESING)
+gpg_fm: Format = FM.add_format('gpg', FormatCategory.ENCRYPTING)
+zip_fm: Format = FM.add_format('zip', FormatCategory.ALL)
+
+FM.add_exts(['tar'], [tar_fm])
+FM.add_exts(['gzip', 'gz', 'z'], [gzip_fm])
+FM.add_exts(['tgzip', 'tgz'], [tar_fm, gzip_fm])
+FM.add_exts(['xz'], [xz_fm])
+FM.add_exts(['txz'], [tar_fm, xz_fm])
+FM.add_exts(['bzip2', 'bz2'], [bzip2_fm])
+FM.add_exts(['tbzip2', 'tbz2'], [tar_fm, bzip2_fm])
+FM.add_exts(['gpg'], [gpg_fm])
+FM.add_exts(['zip'], [zip_fm])
+
+# ####################
+# Argument Parser
+# ####################
+
+parser: ArgumentParser = ArgumentParser(
+        prog=PROG_NAME,
+        description=PROG_DESC,
+        )
+
+parser.add_argument('--version',
+                    action='store_true',
+                    dest='version',
+                    help='show the version of this tool'
+                    )
+
+operation_group = parser.add_mutually_exclusive_group(required=True)
+operation_group.add_argument('-c', '--compress',
+                             action='store_const',
+                             const=Operation.COMPRESS,
+                             dest='operation',
+                             help='set operation mode to compression')
+operation_group.add_argument('-d', '--decompress',
+                             action='store_const',
+                             const=Operation.DECOMPRESS,
+                             dest='operation',
+                             help='set operation mode to decompress')
+
+parser.add_argument('files',
+                    nargs='*',
+                    default=[],
+                    help='the files to operates on')
+parser.add_argument('--informative',
+                    action='store_true',
+                    dest='informative',
+                    help='Outputs information about the current execution process')
+parser.add_argument('--dry',
+                    action='store_true',
+                    dest='dry',
+                    help=('stop execution after recopiling all information, it does not'
+                        'modify the disk. It is intended to be used with --informative'))
+parser.add_argument('--format',
+                    help=('specify the format to be used when compress or decompress.' 
+                        'it should be the standard extension of the format for example:' 
+                        '"tar.gz" or "tgz" for tar and gzip tools or "zip" for zip'))
+parser.add_argument('-o', '--output',
+                    help=('the output directory if --decompress' 
+                        '(defaults to ${cwd}/{decompression_filename}/), or the' 
+                        'resulting compressed file if --compress'))
+
+# ####################
+# Functions
+# ####################
+
+def print_version() -> None:
+    print(f'{PROG_NAME} version ({PROG_VERSION})')
+    print(f'Repository: {PROG_REPOSITORY}')
+
+def title(title: str) -> None:
+    print()
+    print(f'[[{title}]]')
+
+def err(msg: str) -> None:
+    print(f'ERROR: {msg}')
+
+def print_compression_information(args: Namespace, fmts_detected: list[Format]) -> None:
+    title('informative')
+    print(f'operation: compression')
+    print(f'output: {args.output}')
+    print(f'format used: {fmts_detected}')
+    print(f'is dry: {args.dry}')
+    print(f'files: {args.files}')
+
+def execute_compression(args: Namespace) -> int:
+    output: str = args.output
+    format_filename: str = output
+    if args.format is not None:
+        format_filename = 'dumb_file.' + args.format.removeprefix('.')
+
+    if not output:
+        err('you need to specify the --output file for --compress')
+        return 1
+
+    fmts: list[Format] = FM.detect_formats(format_filename)
+
+    if args.informative:
+        print_compression_information(args, fmts)
+
+    if args.dry:
+        return 0
+    return 0
+
+def main() -> int:
+    args: Namespace = parser.parse_args()
+
+    if args.version:
+        print_version()
+        return 0
+
+    match args.operation:
+        case Operation.COMPRESS:
+            return execute_compression(args)
+        case _:
+            raise Exception('wtf bruh?')
+    return 0
+
+if __name__ == '__main__':
+    status_code: int = main()
+    sys.exit(status_code)
