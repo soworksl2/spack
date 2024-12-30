@@ -1,10 +1,14 @@
 #!/usr/bin/python3
 
 import sys
+import os
+import shutil
 from argparse import ArgumentParser, Namespace
+from abc import ABC, abstractmethod
 from functools import reduce
+from subprocess import Popen
 from enum import Enum, IntFlag, auto
-from typing import Optional
+from typing import Optional, IO, Tuple, Any, Literal, Callable, cast
 
 
 class Operation(Enum):
@@ -27,6 +31,15 @@ class FormatCategory(IntFlag):
         else:
             return new
 
+class Arity(Enum):
+    ZERO=auto()
+    ONE=auto()
+    INF=auto()
+
+
+FilesSrc = list[str] | IO[bytes]
+CmdArgsGen = Callable[[Optional[str], list[str]], list[str]]
+
 class Format:
     def __init__(self, name: str, category: FormatCategory) -> None:
         self.name: str = name
@@ -35,10 +48,23 @@ class Format:
     def __repr__(self) -> str:
         return self.name
 
+    def __key(self) -> Tuple[Any, ...]:
+        return (self.name, self.category)
+
+    def __hash__(self) -> int:
+        return hash(self.__key())
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(self, Format):
+            return bool(self.__key() == other.__key())
+        raise NotImplemented()
+
+#TODO: I can split this class in two FormatManager and ToolsManager
 class FormatManager:
     def __init__(self) -> None:
         self._formats: list[Format] = []
         self._exts_formats: dict[str, list[Format]] = {}
+        self._cfmt_tool_rels: dict[Tuple[Format, ...], list[CTool]] = {}
 
     def add_format(self, fmt: str, category: FormatCategory) -> Format:
         f: Format = Format(fmt, category)
@@ -55,6 +81,15 @@ class FormatManager:
         for ext in exts:
             self._add_ext(ext, fmts)
 
+    def add_compress_format_tools_relation(self,
+                                           fmts: Tuple[Format, ...],
+                                           tools: list['CTool']) -> None:
+        assert fmts
+        assert tools
+        assert not fmts in self._cfmt_tool_rels, 'fmts is assigned twice'
+
+        self._cfmt_tool_rels[fmts] = tools
+
     def detect_formats(self, format_filename: str) -> list[Format]:
         format_filename = format_filename.strip()
         if not format_filename:
@@ -65,7 +100,9 @@ class FormatManager:
         category_left: FormatCategory = FormatCategory.ALL
         for ext in exts:
             cfmts: list[Format] = self._exts_formats.get(ext, [])
-            ccatg_found: FormatCategory = reduce(lambda f, n: f | n.category, cfmts, FormatCategory(0))
+            ccatg_found: FormatCategory = reduce(lambda f, n: f | n.category,
+                                                 cfmts,
+                                                 FormatCategory(0))
 
             if not cfmts:
                 break
@@ -78,6 +115,302 @@ class FormatManager:
 
         return fmts
 
+    def get_ctools_for(self, fmt: Format) -> list['CTool']:
+        #this is converted to a list because this would change fmt to a list
+        #to get for example 7zip for [tar.gz]
+        key: Tuple[Format, ...] = tuple([fmt])
+        return self._cfmt_tool_rels.get(key, [])
+
+    def get_first_available_tool(self, tools: list['CTool']) -> Optional['CTool']:
+        for tool in tools:
+            if tool.is_available():
+                return tool
+        return None
+
+class InputTool:
+    _tmps_id_counter: int = 0
+
+    def __init__(self, arity: Arity, support_stdin: bool) -> None:
+        InputTool._ensure_valid_init_args(arity, support_stdin)
+        self.arity: Arity = arity
+        self.support_stdin: bool = support_stdin
+
+        self._src: Optional[FilesSrc] = None
+        self._temp_file: Optional[str] = None
+        self._temp_stream: Optional[IO[bytes]] = None
+
+    @staticmethod
+    def _ensure_valid_init_args(arity: Arity, support_stdin: bool) -> None:
+        if arity == Arity.ZERO:
+            assert support_stdin
+
+    @classmethod
+    def _get_next_tmp_id(cls) -> int:
+        cls._tmps_id_counter += 1
+        return cls._tmps_id_counter
+
+    def set(self, src: FilesSrc) -> None:
+        self._src = src
+
+    def _try_convert_to_args(self) -> Optional[list[str]]:
+        assert isinstance(self._src, IO)
+        global TMP_DIR
+        os.makedirs(TMP_DIR, exist_ok=True)
+        tmp_path: str = TMP_DIR + '/in_temp_' + str(InputTool._get_next_tmp_id())
+        try:
+            with open(tmp_path, 'wb') as tmp_stream:
+                shutil.copyfileobj(self._src, tmp_stream)
+                self._temp_file = tmp_path
+                return [tmp_path]
+        except:
+            return None
+
+    @property
+    def is_stream(self) -> bool:
+        return isinstance(self._src, IO)
+
+    def consume_as_args(self) -> Optional[list[str]]:
+        if isinstance(self._src, list):
+            return self._src
+        return self._try_convert_to_args()
+
+    def _try_convert_to_stream(self) -> Optional[IO[bytes]]:
+        assert isinstance(self._src, list)
+        src: list[str] = self._src
+        if len(src) > 1:
+            return None
+        file_arg: str = src[0]
+        try:
+            f: IO[bytes] = open(file_arg, 'rb')
+        except:
+            return None
+        self._temp_stream = f
+        return f
+
+    def consume_as_stream(self) -> Optional[IO[bytes]]:
+        if isinstance(self._src, IO):
+            return self._src
+        return self._try_convert_to_stream()
+
+    def dispose(self) -> bool:
+        if self._temp_stream:
+            self._temp_stream.close()
+
+        if self._temp_file:
+            try:
+                os.remove(self._temp_file)
+            except:
+                return False
+        return True
+
+class OutputTool:
+    def __init__(self, arity: Arity, support_stdout: bool) -> None:
+        self.arity: Arity = arity
+        self.support_stdout: bool = support_stdout
+
+        self._output: Optional[FilesSrc] = None
+ 
+    def set(self, output: FilesSrc) -> None:
+        assert output
+        if isinstance(output, list):
+            assert len(output) == 1
+
+        self._output = output
+
+    @property
+    def is_stream(self) -> bool:
+        return isinstance(self._output, IO)
+
+    def consume_as_args(self) -> Optional[list[str]]:
+        assert self._output
+        if isinstance(self._output, IO):
+            raise NotImplementedError()
+        else:
+            return self._output
+
+    def consume_as_stream(self) -> Optional[IO[bytes]]:
+        assert self._output
+        if isinstance(self._output, list):
+            raise NotImplementedError()
+        else:
+            return self._output
+
+    def dispose(self) -> None:
+        pass #Do nothingn yet
+
+class CTool:
+    def __init__(self,
+                 name: str,
+                 cmd_args_gen: CmdArgsGen,
+                 input_spec: InputTool,
+                 output_spec: OutputTool,
+                 tool_name: str = '') -> None:
+        assert name
+
+        self._name: str = name
+        self._cmd_args_gen: CmdArgsGen = cmd_args_gen
+        self._tool_name: str = tool_name if tool_name else name
+        self._input: InputTool = input_spec
+        self._output: OutputTool = output_spec
+
+        self.current_process: Optional[Popen[bytes]] = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def is_available(self) -> bool:
+        return bool(shutil.which(self._tool_name))
+
+    @property
+    def input(self) -> InputTool:
+        return self._input
+
+    @property
+    def output(self) -> OutputTool:
+        return self._output
+
+    def _try_get_inputs(self) -> Tuple[bool, list[str], Optional[IO[bytes]]]:
+        '''returns (is_ok, args_input, stream or stdin input) or defaults'''
+        assert self._input
+
+        args: list[str] = []
+        stream: Optional[IO[bytes]] = None
+        cinput: InputTool = self._input
+
+        if not cinput.support_stdin:
+            args = cinput.consume_as_args() or []
+        else:
+            if cinput.is_stream:
+                stream = cinput.consume_as_stream()
+            else:
+                args = cinput.consume_as_args() or []
+        is_ok: bool = bool(args) ^ bool(stream)
+        return (is_ok, args, stream)
+
+    def _try_get_output(self) -> Tuple[bool, Optional[str], Optional[IO[bytes]]]:
+        assert self._output
+        coutput: OutputTool = self._output
+        #TODO: YEAYEAYEA ONLY ARGS FORS NOW
+        args: Optional[list[str]] = coutput.consume_as_args()
+        if args is None:
+            return (False, None, None)
+        return (True, args[0], None)
+
+    def start(self) -> bool:
+        input_ok, input_args, input_stream = self._try_get_inputs()
+        output_ok, output_args, output_stream = self._try_get_output()
+
+        if not input_ok or  not output_ok:
+            return False
+
+        args = self._cmd_args_gen(output_args, input_args)
+        process = Popen(
+                args,
+                stdin=input_stream,
+                stdout=output_stream)
+
+        if input_stream:
+            input_stream.close()
+        if output_stream:
+            output_stream.close()
+
+        self._current_process = process
+        return True
+
+    def dispose(self) -> None:
+        assert self._current_process
+        self._current_process.wait()
+        self._input.dispose()
+
+def create_ctar() -> CTool:
+    def ctar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
+        #TODO: tar support stdin but to pass a list of file to read
+        #not implemented this yet but could be in the future
+        poutput: str = output if output else '-'
+        args: list[str] = ['tar', '-cf', poutput] + args_input
+        return args
+
+    input_spec: InputTool = InputTool(Arity.INF, False)
+    output_spec: OutputTool = OutputTool(Arity.ONE, True)
+    return CTool('tar', ctar_cmd_args_gen, input_spec, output_spec)
+
+class CToolsManager:
+    def __init__(self, tools: list[CTool], err_msg: str = '') -> None:
+        assert bool(tools) ^ bool(err_msg), 'specify the tools or err_msg. no both'
+        self._tools: list[CTool] = tools
+        self._can_run: bool = not bool(err_msg)
+        self._err_msg: str = err_msg
+        self._inputs: Optional[FilesSrc] = None
+        self._output: Optional[FilesSrc] = None
+
+    @staticmethod
+    def with_error(err_msg: str) -> 'CToolsManager':
+        return CToolsManager([], err_msg)
+
+    @staticmethod
+    def create_from_formats(fmts: list[Format]) -> 'CToolsManager':
+        assert fmts, 'you need to specify formats'
+        tools_found: list[CTool] = []
+        for fmt in fmts:
+            ctools: list[CTool] = FM.get_ctools_for(fmt)
+            ctool: Optional[CTool] = FM.get_first_available_tool(ctools)
+            if not ctool:
+                err_msg: str = (
+                        f'there is not tools that support "{fmt}" format '
+                        f'installed in the system. these tools can be {ctools}'
+                        )
+                return CToolsManager.with_error(err_msg)
+            tools_found.append(ctool)
+        return CToolsManager(tools_found)
+
+    def set_inputs(self, inputs: FilesSrc) -> bool:
+        if not self._can_run:
+            return False
+
+        self._inputs = inputs
+        return True
+
+    def set_output(self, output: FilesSrc) -> None:
+        assert isinstance(output, list) and len(output) == 1
+        self._output = output
+
+    @property
+    def can_run(self) -> bool:
+        return self._can_run
+
+    def get_err(self) -> str:
+        return self._err_msg
+
+    def _tool_can_handle_amount_inputs(self, tool: CTool) -> bool:
+        assert self._inputs
+        if isinstance(self._inputs, IO):
+            return True
+
+        return not (
+                tool.input.arity == Arity.ONE and
+                len(self._inputs) > 1)
+
+    def run(self) -> str:
+        assert self._can_run
+        assert self._output
+        assert self._inputs
+
+        ftool: CTool = self._tools[0]
+        ltool: CTool = ftool
+
+        if not self._tool_can_handle_amount_inputs(ftool):
+            return (
+                f'cannot compress multiple files because the first format used'
+                f' is {ftool.name}')
+
+        ftool.input.set(self._inputs)
+        ltool.output.set(self._output)
+
+        ftool.start()
+        ftool.dispose()
+        return ''
+
 # ####################
 # Constants
 # ####################
@@ -86,6 +419,8 @@ PROG_NAME: str = 'spack'
 PROG_DESC: str = 'A tool to unify all archiving, compressing, encription tools'
 PROG_VERSION: str = '0.0.1'
 PROG_REPOSITORY: str = 'https://github.com/soworksl2/spack'
+
+TMP_DIR: str = '/var/tmp/spack_tmps'
 
 FM: FormatManager = FormatManager()
 tar_fm: Format = FM.add_format('tar', FormatCategory.ARCHIVING)
@@ -104,6 +439,8 @@ FM.add_exts(['bzip2', 'bz2'], [bzip2_fm])
 FM.add_exts(['tbzip2', 'tbz2'], [tar_fm, bzip2_fm])
 FM.add_exts(['gpg'], [gpg_fm])
 FM.add_exts(['zip'], [zip_fm])
+
+FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
 
 # ####################
 # Argument Parser
@@ -194,6 +531,15 @@ def execute_compression(args: Namespace) -> int:
 
     if args.dry:
         return 0
+
+    tools_manager = CToolsManager.create_from_formats(fmts)
+    tools_manager.set_inputs(args.files)
+    tools_manager.set_output([output])
+    err_msg = tools_manager.run()
+    if err_msg:
+        err(err_msg)
+        return 1
+
     return 0
 
 def main() -> int:
@@ -213,3 +559,7 @@ def main() -> int:
 if __name__ == '__main__':
     status_code: int = main()
     sys.exit(status_code)
+
+# TODO: delete the temp directory created on var/temp on exit
+# TODO: handle SIGTERM
+# TODO: Add a mecanism to add errors instead of passing it over the functions
