@@ -467,7 +467,7 @@ operation_group.add_argument('-d', '--decompress',
                              action='store_const',
                              const=Operation.DECOMPRESS,
                              dest='operation',
-                             help='set operation mode to decompress')
+                             help='set operation mode to decompression')
 
 parser.add_argument('files',
                     nargs='*',
@@ -481,15 +481,15 @@ parser.add_argument('--dry',
                     action='store_true',
                     dest='dry',
                     help=('stop execution after recopiling all information, it does not'
-                        'modify the disk. It is intended to be used with --informative'))
+                        ' modify the disk. It is intended to be used with --informative'))
 parser.add_argument('--format',
                     help=('specify the format to be used when compress or decompress.' 
-                        'it should be the standard extension of the format for example:' 
-                        '"tar.gz" or "tgz" for tar and gzip tools or "zip" for zip'))
+                        ' it should be the standard extension of the format for example:' 
+                        ' "tar.gz" or "tgz" for tar and gzip tools or "zip" for zip'))
 parser.add_argument('-o', '--output',
                     help=('the output directory if --decompress' 
-                        '(defaults to ${cwd}/{decompression_filename}/), or the' 
-                        'resulting compressed file if --compress'))
+                        ' (defaults to ${cwd}/{decompression_filename}/), or the' 
+                        ' resulting compressed file if --compress'))
 
 # ####################
 # Functions
