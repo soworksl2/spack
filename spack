@@ -457,7 +457,7 @@ parser.add_argument('--version',
                     help='show the version of this tool'
                     )
 
-operation_group = parser.add_mutually_exclusive_group(required=True)
+operation_group = parser.add_mutually_exclusive_group()
 operation_group.add_argument('-c', '--compress',
                              action='store_const',
                              const=Operation.COMPRESS,
@@ -553,8 +553,9 @@ def main() -> int:
         case Operation.COMPRESS:
             return execute_compression(args)
         case _:
-            raise Exception('wtf bruh?')
-    return 0
+            parser.print_usage()
+            err('An invalid or no operation was specified. --help for help')
+            return 1
 
 if __name__ == '__main__':
     status_code: int = main()
