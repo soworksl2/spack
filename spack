@@ -383,7 +383,7 @@ class CToolsManager:
         return self._err_msg
 
     def _tool_can_handle_amount_inputs(self, tool: CTool) -> bool:
-        assert self._inputs
+        assert self._inputs is not None
         if isinstance(self._inputs, IO):
             return True
 
@@ -394,8 +394,11 @@ class CToolsManager:
     def run(self) -> str:
         assert self._can_run
         assert self._output
-        assert self._inputs
+        assert self._inputs is not None
 
+        if not self._inputs:
+            return 'You need to specify files to compress, None was specified'
+        
         ftool: CTool = self._tools[0]
         ltool: CTool = ftool
 
