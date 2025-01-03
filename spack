@@ -365,6 +365,17 @@ def create_ctar() -> CTool:
     output_spec: OutputTool = OutputTool(Arity.ONE, True)
     return CTool('tar', ctar_cmd_args_gen, input_spec, output_spec)
 
+def create_cgzip() -> CTool:
+    def cgzip_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
+        args = ['gzip', '--stdout']
+        if args_input:
+            args.append(args_input[0])
+        return args
+
+    input_spec = InputTool(Arity.ONE, True)
+    output_spec = OutputTool(Arity.ZERO, True)
+    return CTool('gzip', cgzip_cmd_args_gen, input_spec, output_spec)
+
 class CToolsManager:
     def __init__(self, tools: list[CTool], err_msg: str = '') -> None:
         assert bool(tools) ^ bool(err_msg), 'specify the tools or err_msg. no both'
@@ -474,6 +485,7 @@ FM.add_exts(['gpg'], [gpg_fm])
 FM.add_exts(['zip'], [zip_fm])
 
 FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
+FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 
 # ####################
 # Argument Parser
