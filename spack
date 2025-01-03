@@ -95,18 +95,18 @@ class FormatManager:
         if not format_filename:
             return []
         fmts: list[Format] = []
-        exts: list[str] = format_filename.split('.')[1:]
+        exts = format_filename.split('.')[1:]
         exts.reverse()
-        category_left: FormatCategory = FormatCategory.ALL
+        category_left = FormatCategory.ALL
         for ext in exts:
-            cfmts: list[Format] = self._exts_formats.get(ext, [])
-            ccatg_found: FormatCategory = reduce(lambda f, n: f | n.category,
+            cfmts = self._exts_formats.get(ext, [])
+            ccatg_found = reduce(lambda f, n: f | n.category,
                                                  cfmts,
                                                  FormatCategory(0))
 
             if not cfmts:
                 break
-            catg_conflict: bool = int(ccatg_found) > int(category_left)
+            catg_conflict = int(ccatg_found) > int(category_left)
             if catg_conflict:
                 break
 
@@ -118,7 +118,7 @@ class FormatManager:
     def get_ctools_for(self, fmt: Format) -> list['CTool']:
         #this is converted to a list because this would change fmt to a list
         #to get for example 7zip for [tar.gz]
-        key: Tuple[Format, ...] = tuple([fmt])
+        key = tuple([fmt])
         return self._cfmt_tool_rels.get(key, [])
 
     def get_first_available_tool(self, tools: list['CTool']) -> Optional['CTool']:
@@ -156,7 +156,7 @@ class InputTool:
         assert isinstance(self._src, IO)
         global TMP_DIR
         os.makedirs(TMP_DIR, exist_ok=True)
-        tmp_path: str = TMP_DIR + '/in_temp_' + str(InputTool._get_next_tmp_id())
+        tmp_path = TMP_DIR + '/in_temp_' + str(InputTool._get_next_tmp_id())
         try:
             with open(tmp_path, 'wb') as tmp_stream:
                 shutil.copyfileobj(self._src, tmp_stream)
@@ -176,12 +176,12 @@ class InputTool:
 
     def _try_convert_to_stream(self) -> Optional[IO[bytes]]:
         assert isinstance(self._src, list)
-        src: list[str] = self._src
+        src = self._src
         if len(src) > 1:
             return None
-        file_arg: str = src[0]
+        file_arg = src[0]
         try:
-            f: IO[bytes] = open(file_arg, 'rb')
+            f = open(file_arg, 'rb')
         except:
             return None
         self._temp_stream = f
@@ -292,7 +292,7 @@ class CTool:
 
         args: list[str] = []
         stream: Optional[IO[bytes]] = None
-        cinput: InputTool = self._input
+        cinput = self._input
 
         if not cinput.support_stdin:
             args = cinput.consume_as_args() or []
@@ -357,12 +357,12 @@ def create_ctar() -> CTool:
     def ctar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
         #TODO: tar support stdin but to pass a list of file to read
         #not implemented this yet but could be in the future
-        poutput: str = output if output else '-'
-        args: list[str] = ['tar', '-cf', poutput] + args_input
+        poutput = output if output else '-'
+        args = ['tar', '-cf', poutput] + args_input
         return args
 
-    input_spec: InputTool = InputTool(Arity.INF, False)
-    output_spec: OutputTool = OutputTool(Arity.ONE, True)
+    input_spec = InputTool(Arity.INF, False)
+    output_spec = OutputTool(Arity.ONE, True)
     return CTool('tar', ctar_cmd_args_gen, input_spec, output_spec)
 
 def create_cgzip() -> CTool:
@@ -394,10 +394,10 @@ class CToolsManager:
         assert fmts, 'you need to specify formats'
         tools_found: list[CTool] = []
         for fmt in fmts:
-            ctools: list[CTool] = FM.get_ctools_for(fmt)
-            ctool: Optional[CTool] = FM.get_first_available_tool(ctools)
+            ctools = FM.get_ctools_for(fmt)
+            ctool = FM.get_first_available_tool(ctools)
             if not ctool:
-                err_msg: str = (
+                err_msg = (
                         f'there is not tools that support "{fmt}" format '
                         f'installed in the system. these tools can be {ctools}'
                         )
@@ -440,8 +440,8 @@ class CToolsManager:
         if not self._inputs:
             return 'You need to specify files to compress, None was specified'
         
-        ftool: CTool = self._tools[0]
-        ltool: CTool = ftool
+        ftool = self._tools[0]
+        ltool = ftool
 
         if not self._tool_can_handle_amount_inputs(ftool):
             return (
@@ -459,12 +459,12 @@ class CToolsManager:
 # Constants
 # ####################
 
-PROG_NAME: str = 'spack'
-PROG_DESC: str = 'A tool to unify all archiving, compressing, encription tools'
-PROG_VERSION: str = '0.0.1'
-PROG_REPOSITORY: str = 'https://github.com/soworksl2/spack'
+PROG_NAME = 'spack'
+PROG_DESC = 'A tool to unify all archiving, compressing, encription tools'
+PROG_VERSION = '0.0.1'
+PROG_REPOSITORY = 'https://github.com/soworksl2/spack'
 
-TMP_DIR: str = '/var/tmp/spack_tmps'
+TMP_DIR = '/var/tmp/spack_tmps'
 
 FM: FormatManager = FormatManager()
 tar_fm: Format = FM.add_format('tar', FormatCategory.ARCHIVING)
@@ -491,7 +491,7 @@ FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 # Argument Parser
 # ####################
 
-parser: ArgumentParser = ArgumentParser(
+parser = ArgumentParser(
         prog=PROG_NAME,
         description=PROG_DESC,
         )
@@ -561,7 +561,7 @@ def print_compression_information(args: Namespace, fmts_detected: list[Format]) 
 
 def execute_compression(args: Namespace) -> int:
     output: str = args.output
-    format_filename: str = output
+    format_filename = output
     if args.format is not None:
         format_filename = 'dumb_file.' + args.format.removeprefix('.')
 
@@ -569,7 +569,7 @@ def execute_compression(args: Namespace) -> int:
         err('you need to specify the --output file for --compress')
         return 1
 
-    fmts: list[Format] = FM.detect_formats(format_filename)
+    fmts = FM.detect_formats(format_filename)
 
     if args.informative:
         print_compression_information(args, fmts)
@@ -588,7 +588,7 @@ def execute_compression(args: Namespace) -> int:
     return 0
 
 def main() -> int:
-    args: Namespace = parser.parse_args()
+    args = parser.parse_args()
 
     if args.version:
         print_version()
@@ -603,7 +603,7 @@ def main() -> int:
             return 1
 
 if __name__ == '__main__':
-    status_code: int = main()
+    status_code = main()
     sys.exit(status_code)
 
 # TODO: delete the temp directory created on var/temp on exit
