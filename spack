@@ -605,7 +605,3 @@ def main() -> int:
 if __name__ == '__main__':
     status_code = main()
     sys.exit(status_code)
-
-# TODO: delete the temp directory created on var/temp on exit
-# TODO: handle SIGTERM
-# TODO: Add a mecanism to add errors instead of passing it over the functions
