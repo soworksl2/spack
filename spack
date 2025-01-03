@@ -209,6 +209,7 @@ class OutputTool:
         self.support_stdout: bool = support_stdout
 
         self._output: Optional[FilesSrc] = None
+        self._temp_stream: Optional[IO[bytes]] = None
  
     def set(self, output: FilesSrc) -> None:
         assert output
@@ -228,15 +229,30 @@ class OutputTool:
         else:
             return self._output
 
+    def _try_convert_to_stream(self) -> Optional[IO[bytes]]:
+        assert isinstance(self._output, list)
+        outputs = self._output
+        if len(outputs) > 1:
+            return None
+        out_arg = outputs[0]
+        try:
+            f = open(out_arg, 'wb')
+        except:
+            return None
+        self._temp_stream = f
+        return f
+
     def consume_as_stream(self) -> Optional[IO[bytes]]:
         assert self._output
         if isinstance(self._output, list):
-            raise NotImplementedError()
+            return self._try_convert_to_stream()
         else:
             return self._output
 
-    def dispose(self) -> None:
-        pass #Do nothingn yet
+    def dispose(self) -> bool:
+        if self._temp_stream:
+            self._temp_stream.close()
+        return True
 
 class CTool:
     def __init__(self,
@@ -253,7 +269,7 @@ class CTool:
         self._input: InputTool = input_spec
         self._output: OutputTool = output_spec
 
-        self.current_process: Optional[Popen[bytes]] = None
+        self._current_process: Optional[Popen[bytes]] = None
 
     @property
     def name(self) -> str:
@@ -290,12 +306,26 @@ class CTool:
 
     def _try_get_output(self) -> Tuple[bool, Optional[str], Optional[IO[bytes]]]:
         assert self._output
-        coutput: OutputTool = self._output
-        #TODO: YEAYEAYEA ONLY ARGS FORS NOW
-        args: Optional[list[str]] = coutput.consume_as_args()
-        if args is None:
-            return (False, None, None)
-        return (True, args[0], None)
+
+        arg: Optional[str] = None
+        stream: Optional[IO[bytes]] = None
+        coutput = self._output
+        if not coutput.support_stdout:
+            tmp_args = coutput.consume_as_args()
+            arg = tmp_args[0] if tmp_args else None
+            return (bool(arg), arg, None)
+
+        if coutput.arity == Arity.ZERO:
+            stream = coutput.consume_as_stream()
+            return (bool(stream), None, stream)
+
+        if coutput.is_stream:
+            stream = coutput.consume_as_stream()
+        else:
+            tmp_args = coutput.consume_as_args()
+            arg = tmp_args[0] if tmp_args else None
+        is_ok = bool(arg) ^ bool(stream)
+        return (is_ok, arg, stream)
 
     def start(self) -> bool:
         input_ok, input_args, input_stream = self._try_get_inputs()
