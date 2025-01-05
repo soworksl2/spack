@@ -6,7 +6,7 @@ import shutil
 from argparse import ArgumentParser, Namespace
 from abc import ABC, abstractmethod
 from functools import reduce
-from subprocess import Popen
+from subprocess import Popen, PIPE
 from enum import Enum, IntFlag, auto
 from typing import Optional, IO, Tuple, Any, Literal, Callable, cast
 
@@ -39,6 +39,68 @@ class Arity(Enum):
 
 FilesSrc = list[str] | IO[bytes]
 CmdArgsGen = Callable[[Optional[str], list[str]], list[str]]
+
+class FilesSrcResolver:
+    def __init__(self) -> None:
+        self._lockedset: bool = False
+        self._src: Optional[FilesSrc] = None
+        self._is_pipe: bool = False
+        self._piped_stream: Optional[IO[bytes]] = None
+
+    def set(self, src: FilesSrc) -> None:
+        assert not self._lockedset
+        self._src = src
+        self._lockedset = True
+
+    def set_pipe(self) -> None:
+        assert not self._lockedset
+        self._is_pipe = True
+        self._lockedset = True
+
+    def set_piped_stream(self, stream: IO[bytes]) -> None:
+        self._piped_stream = stream
+
+    def get(self) -> FilesSrc | int:
+        if self._is_pipe:
+            return PIPE
+        elif self._src is not None:
+            return self._src
+        else:
+            raise AssertionError('files src was not set yet')
+
+    def get_as_args(self) -> list[str]:
+        assert isinstance(self._src, list)
+        return self._src
+
+    def _get_as_piped_stream(self) -> IO[bytes]:
+        assert self._piped_stream is not None
+        return self._piped_stream
+
+    def _get_as_actual_stream(self) -> IO[bytes]:
+        assert isinstance(self._src, IO)
+        return self._src
+
+    def get_as_stream(self) -> IO[bytes]:
+        if self._is_pipe:
+            return self._get_as_piped_stream()
+        else:
+            return self._get_as_actual_stream()
+
+    def has_value(self) -> bool:
+        return self._src is not None
+
+    def is_args(self) -> bool:
+        return isinstance(self._src, list)
+
+    def is_stream(self) -> bool:
+        return isinstance(self._src, IO)
+
+    def is_pipe(self) -> bool:
+        return self._is_pipe
+
+    def is_stream_or_pipe(self) -> bool:
+        return self.is_stream() or self.is_pipe()
+        
 
 class Format:
     def __init__(self, name: str, category: FormatCategory) -> None:
@@ -135,7 +197,7 @@ class InputTool:
         self.arity: Arity = arity
         self.support_stdin: bool = support_stdin
 
-        self._src: Optional[FilesSrc] = None
+        self._src: FilesSrcResolver = FilesSrcResolver()
         self._temp_file: Optional[str] = None
         self._temp_stream: Optional[IO[bytes]] = None
 
@@ -149,17 +211,23 @@ class InputTool:
         cls._tmps_id_counter += 1
         return cls._tmps_id_counter
 
-    def set(self, src: FilesSrc) -> None:
-        self._src = src
+    def set(self, src: FilesSrc | FilesSrcResolver) -> None:
+        if isinstance(src, FilesSrcResolver):
+            self._src = src
+        else:
+            fsr = FilesSrcResolver()
+            fsr.set(src)
+            self._src = fsr
 
     def _try_convert_to_args(self) -> Optional[list[str]]:
-        assert isinstance(self._src, IO)
         global TMP_DIR
+        src = self._src.get_as_stream()
+
         os.makedirs(TMP_DIR, exist_ok=True)
         tmp_path = TMP_DIR + '/in_temp_' + str(InputTool._get_next_tmp_id())
         try:
             with open(tmp_path, 'wb') as tmp_stream:
-                shutil.copyfileobj(self._src, tmp_stream)
+                shutil.copyfileobj(src, tmp_stream)
                 self._temp_file = tmp_path
                 return [tmp_path]
         except:
@@ -167,16 +235,15 @@ class InputTool:
 
     @property
     def is_stream(self) -> bool:
-        return isinstance(self._src, IO)
+        return self._src.is_stream_or_pipe()
 
     def consume_as_args(self) -> Optional[list[str]]:
-        if isinstance(self._src, list):
-            return self._src
+        if self._src.is_args():
+            return self._src.get_as_args()
         return self._try_convert_to_args()
 
     def _try_convert_to_stream(self) -> Optional[IO[bytes]]:
-        assert isinstance(self._src, list)
-        src = self._src
+        src = self._src.get_as_args()
         if len(src) > 1:
             return None
         file_arg = src[0]
@@ -188,8 +255,8 @@ class InputTool:
         return f
 
     def consume_as_stream(self) -> Optional[IO[bytes]]:
-        if isinstance(self._src, IO):
-            return self._src
+        if self._src.is_stream_or_pipe():
+            return self._src.get_as_stream()
         return self._try_convert_to_stream()
 
     def dispose(self) -> bool:
@@ -208,30 +275,36 @@ class OutputTool:
         self.arity: Arity = arity
         self.support_stdout: bool = support_stdout
 
-        self._output: Optional[FilesSrc] = None
+        self._output: FilesSrcResolver = FilesSrcResolver()
         self._temp_stream: Optional[IO[bytes]] = None
  
     def set(self, output: FilesSrc) -> None:
-        assert output
         if isinstance(output, list):
             assert len(output) == 1
 
-        self._output = output
+        self._output.set(output)
+
+    def set_pipe(self) -> FilesSrcResolver:
+        assert not self._output.has_value(), (
+            'you cannot specify a value and then use set_pipe, because' 
+            ' internally it set the output to PIPE')
+        self._output.set_pipe()
+        return self._output
+
+    def set_piped_stream(self, stream: IO[bytes]) -> None:
+        self._output.set_piped_stream(stream)
 
     @property
     def is_stream(self) -> bool:
-        return isinstance(self._output, IO)
+        return self._output.is_stream_or_pipe()
 
     def consume_as_args(self) -> Optional[list[str]]:
-        assert self._output
-        if isinstance(self._output, IO):
+        if self._output.is_stream() or self._output.is_pipe():
             raise NotImplementedError()
         else:
-            return self._output
+            return self._output.get_as_args()
 
-    def _try_convert_to_stream(self) -> Optional[IO[bytes]]:
-        assert isinstance(self._output, list)
-        outputs = self._output
+    def _try_convert_to_stream(self, outputs: list[str]) -> Optional[IO[bytes]]:
         if len(outputs) > 1:
             return None
         out_arg = outputs[0]
@@ -242,12 +315,14 @@ class OutputTool:
         self._temp_stream = f
         return f
 
-    def consume_as_stream(self) -> Optional[IO[bytes]]:
-        assert self._output
-        if isinstance(self._output, list):
-            return self._try_convert_to_stream()
+    def consume_as_stream(self) -> Optional[IO[bytes] | int]:
+        if self._output.is_args():
+            return self._try_convert_to_stream(self._output.get_as_args())
         else:
-            return self._output
+            if self._output.is_pipe():
+                return PIPE
+            else:
+                return self._output.get_as_stream()
 
     def dispose(self) -> bool:
         if self._temp_stream:
@@ -304,11 +379,11 @@ class CTool:
         is_ok: bool = bool(args) ^ bool(stream)
         return (is_ok, args, stream)
 
-    def _try_get_output(self) -> Tuple[bool, Optional[str], Optional[IO[bytes]]]:
+    def _try_get_output(self) -> Tuple[bool, Optional[str], Optional[IO[bytes] | int]]:
         assert self._output
 
         arg: Optional[str] = None
-        stream: Optional[IO[bytes]] = None
+        stream: Optional[IO[bytes] | int] = None
         coutput = self._output
         if not coutput.support_stdout:
             tmp_args = coutput.consume_as_args()
@@ -331,7 +406,7 @@ class CTool:
         input_ok, input_args, input_stream = self._try_get_inputs()
         output_ok, output_args, output_stream = self._try_get_output()
 
-        if not input_ok or  not output_ok:
+        if not input_ok or not output_ok:
             return False
 
         args = self._cmd_args_gen(output_args, input_args)
@@ -340,18 +415,27 @@ class CTool:
                 stdin=input_stream,
                 stdout=output_stream)
 
-        if input_stream:
-            input_stream.close()
-        if output_stream:
-            output_stream.close()
-
         self._current_process = process
+
+        if input_stream is not None:
+            input_stream.close()
+        if output_stream is not None:
+            if output_stream != PIPE:
+                #nobody will close the output of this poor boy so close it yourself
+                assert not isinstance(output_stream, int)
+                output_stream.close()
+            else:
+                assert process.stdout is not None
+                self._output.set_piped_stream(process.stdout)
+
+
         return True
 
     def dispose(self) -> None:
         assert self._current_process
         self._current_process.wait()
         self._input.dispose()
+        self._output.dispose()
 
 def create_ctar() -> CTool:
     def ctar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
@@ -425,12 +509,23 @@ class CToolsManager:
 
     def _tool_can_handle_amount_inputs(self, tool: CTool) -> bool:
         assert self._inputs is not None
+        assert not isinstance(self._inputs, int), (
+                'if inputs is int it is treated as PIPE and PIPE is only '
+                'for connections')
         if isinstance(self._inputs, IO):
             return True
 
         return not (
                 tool.input.arity == Arity.ONE and
                 len(self._inputs) > 1)
+
+    def _pipe_tools_together(self, tools: list[CTool]) -> None:
+        l = len(tools)
+        for i in range(l - 1):
+            c = tools[i]
+            n = tools[i+1]
+            stream_flow = c.output.set_pipe()
+            n.input.set(stream_flow)
 
     def run(self) -> str:
         assert self._can_run
@@ -439,9 +534,11 @@ class CToolsManager:
 
         if not self._inputs:
             return 'You need to specify files to compress, None was specified'
+
+        tools = self._tools
         
-        ftool = self._tools[0]
-        ltool = ftool
+        ftool = tools[0]
+        ltool = tools[-1]
 
         if not self._tool_can_handle_amount_inputs(ftool):
             return (
@@ -449,10 +546,13 @@ class CToolsManager:
                 f' is {ftool.name}')
 
         ftool.input.set(self._inputs)
+        self._pipe_tools_together(tools)
         ltool.output.set(self._output)
 
-        ftool.start()
-        ftool.dispose()
+        for t in tools:
+            t.start()
+        for t in tools:
+            t.dispose()
         return ''
 
 # ####################
