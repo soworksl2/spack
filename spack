@@ -15,6 +15,15 @@ class Operation(Enum):
     COMPRESS=auto()
     DECOMPRESS=auto()
 
+    def __str__(self) -> str:
+        match (self):
+            case Operation.COMPRESS:
+                return 'COMPRESS'
+            case Operation.DECOMPRESS:
+                return 'DECOMPRESS'
+            case _:
+                raise AssertionError('this branch cannot be possible, I guess')
+
 class FormatCategory(IntFlag):
     #Order matters
     ARCHIVING=auto()
@@ -659,6 +668,14 @@ def print_compression_information(args: Namespace, fmts_detected: list[Format]) 
     print(f'is dry: {args.dry}')
     print(f'files: {args.files}')
 
+def print_information(operation: Operation, output: str, fmts_detected: list[Format], args: Namespace) -> None:
+    title('informative')
+    print(f'operation: {operation!s}')
+    print(f'output: {output}')
+    print(f'format used: {fmts_detected}')
+    print(f'is dry: {args.dry}')
+    print(f'files: {args.files}')
+
 def execute_compression(args: Namespace) -> int:
     output: str = args.output
     format_filename = output
@@ -687,6 +704,40 @@ def execute_compression(args: Namespace) -> int:
 
     return 0
 
+def extract_file_for_decompression_or_fail(files: list[str]) -> Tuple[str, str]:
+    filesl = len(files)
+    if filesl > 1:
+        err_msg = (
+                f'you specified {filesl} files "{files}" and only 1 is allowed'
+                'to operates on')
+        return ('', err_msg)
+    elif filesl < 1:
+        err_msg = 'you need to specify at least 1 file to operates on. use -h'
+        return ('', err_msg)
+    return (files[0], '')
+
+
+def execute_decompression(args: Namespace) -> int:
+    file, errmsg = extract_file_for_decompression_or_fail(args.files)
+    if errmsg:
+        err(errmsg)
+        return 1
+
+    output = args.output or os.path.abspath('.')
+
+    format_filename = file
+    if args.format is not None:
+        format_filename = 'dumb_file.' + args.format.removeprefix('.')
+
+    fmts = FM.detect_formats(format_filename)
+    
+    if args.informative:
+        print_information(Operation.DECOMPRESS, output, fmts, args)
+    if args.dry:
+        return 0
+
+    return 0
+
 def main() -> int:
     args = parser.parse_args()
 
@@ -697,6 +748,8 @@ def main() -> int:
     match args.operation:
         case Operation.COMPRESS:
             return execute_compression(args)
+        case Operation.DECOMPRESS:
+            return execute_decompression(args)
         case _:
             parser.print_usage()
             err('An invalid or no operation was specified. --help for help')
