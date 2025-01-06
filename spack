@@ -648,9 +648,8 @@ parser.add_argument('--format',
                         ' it should be the standard extension of the format for example:' 
                         ' "tar.gz" or "tgz" for tar and gzip tools or "zip" for zip'))
 parser.add_argument('-o', '--output',
-                    help=('the output directory if --decompress' 
-                        ' (defaults to ${cwd}/{decompression_filename}/), or the' 
-                        ' resulting compressed file if --compress'))
+                    help=('the output directory if --decompress or the'
+                          ' resulting compressed file if --compress'))
 
 # ####################
 # Functions
