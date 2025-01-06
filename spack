@@ -186,6 +186,13 @@ class FormatManager:
 
         return fmts
 
+    @staticmethod
+    def proper_format_filename(format_: Optional[str], fallback_filename: str) -> str:
+        if format_ is not None:
+            return 'dumb_file.' + format_.removeprefix('.')
+        else:
+            return fallback_filename
+
     def get_ctools_for(self, fmt: Format) -> list['CTool']:
         #this is converted to a list because this would change fmt to a list
         #to get for example 7zip for [tar.gz]
@@ -678,14 +685,11 @@ def print_information(operation: Operation, output: str, fmts_detected: list[For
 
 def execute_compression(args: Namespace) -> int:
     output: str = args.output
-    format_filename = output
-    if args.format is not None:
-        format_filename = 'dumb_file.' + args.format.removeprefix('.')
-
     if not output:
         err('you need to specify the --output file for --compress')
         return 1
 
+    format_filename = FM.proper_format_filename(args.format, output)
     fmts = FM.detect_formats(format_filename)
 
     if args.informative:
@@ -725,10 +729,7 @@ def execute_decompression(args: Namespace) -> int:
 
     output = args.output or os.path.abspath('.')
 
-    format_filename = file
-    if args.format is not None:
-        format_filename = 'dumb_file.' + args.format.removeprefix('.')
-
+    format_filename = FM.proper_format_filename(args.format, file)
     fmts = FM.detect_formats(format_filename)
     
     if args.informative:
