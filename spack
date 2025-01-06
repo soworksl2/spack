@@ -713,7 +713,7 @@ def extract_file_for_decompression_or_fail(files: list[str]) -> Tuple[str, str]:
     if filesl > 1:
         err_msg = (
                 f'you specified {filesl} files "{files}" and only 1 is allowed'
-                'to operates on')
+                ' to operates on')
         return ('', err_msg)
     elif filesl < 1:
         err_msg = 'you need to specify at least 1 file to operates on. use -h'
