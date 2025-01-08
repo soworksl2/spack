@@ -203,27 +203,21 @@ class FormatManager:
         else:
             return fallback_filename
 
-    def get_ctools_for(self, fmt: Format) -> list['Tool']:
+    def get_tools_for(self, fmt: Format, op: Operation) -> list['Tool']:
         #this is converted to a list because this would change fmt to a list
         #to get for example 7zip for [tar.gz]
         key = tuple([fmt])
-        return self._cfmt_tool_rels.get(key, [])
+        tools_dict = (
+                self._cfmt_tool_rels 
+                if op == Operation.COMPRESS
+                else self._dfmt_tool_rels)
+        return tools_dict.get(key, [])
 
     def get_first_available_tool(self, tools: list['Tool']) -> Optional['Tool']:
         for tool in tools:
             if tool.is_available():
                 return tool
         return None
-
-    def get_first_available_dtool(self, tools: list['Tool']) -> Optional['Tool']:
-        for tool in tools:
-            if tool.is_available():
-                return tool
-        return None
-
-    def get_dtools_for(self, fmt: Format) -> list['Tool']:
-        key = tuple([fmt])
-        return self._dfmt_tool_rels.get(key, [])
 
 class InputTool:
     _tmps_id_counter: int = 0
@@ -505,49 +499,15 @@ def create_dtar() -> Tool:
     output_spec = OutputTool(Arity.ONE, False)
     return Tool('tar', dtar_cmd_args_gen, input_spec, output_spec)
 
-class DToolsManager:
-    def __init__(self, tools: list[Tool], err_msg: str = '') -> None:
+class ToolsManager:
+    def __init__(
+            self,
+            tools: list[Tool],
+            op: Operation,
+            err_msg: str = '') -> None:
         assert bool(tools) ^ bool(err_msg), 'specify the tools or err_msg. no both'
-        self._tools: list[Tool] = tools
-        self._err_msg: str = err_msg
-        self._inputs: Optional[FilesSrc] = None
-        self._output: Optional[FilesSrc] = None
-
-
-    @staticmethod
-    def with_error(err_msg: str) -> 'DToolsManager':
-        assert err_msg
-        return DToolsManager([], err_msg)
-
-    @staticmethod
-    def create_from_formats(fmts: list[Format]) -> 'DToolsManager':
-        assert fmts, 'you need to specify formats'
-        tools_found: list[Tool] = []
-        for fmt in fmts:
-            dtools = FM.get_dtools_for(fmt)
-            dtool = FM.get_first_available_dtool(dtools)
-            if not dtool:
-                err_msg = (
-                        f'there are no tools that support "{fmt}" format'
-                        f' installed in the system. these tools can be {dtools}'
-                        )
-                return DToolsManager.with_error(err_msg)
-            tools_found.append(dtool)
-        return DToolsManager(tools_found)
-
-    def set_input(self, input_: FilesSrc) -> None:
-        self._inputs = input_
-
-    def set_output(self, output: FilesSrc) -> None:
-        self._output = output
-
-    def run(self) -> str:
-        print(f'mira mis tools cagon: {self._tools}')
-        return ''
-
-class CToolsManager:
-    def __init__(self, tools: list[Tool], err_msg: str = '') -> None:
-        assert bool(tools) ^ bool(err_msg), 'specify the tools or err_msg. no both'
+        
+        self._op: Operation = op
         self._tools: list[Tool] = tools
         self._can_run: bool = not bool(err_msg)
         self._err_msg: str = err_msg
@@ -555,24 +515,24 @@ class CToolsManager:
         self._output: Optional[FilesSrc] = None
 
     @staticmethod
-    def with_error(err_msg: str) -> 'CToolsManager':
-        return CToolsManager([], err_msg)
+    def with_error(err_msg: str) -> 'ToolsManager':
+        return ToolsManager([], Operation.COMPRESS, err_msg)
 
     @staticmethod
-    def create_from_formats(fmts: list[Format]) -> 'CToolsManager':
+    def create_from_formats(fmts: list[Format], op: Operation) -> 'ToolsManager':
         assert fmts, 'you need to specify formats'
         tools_found: list[Tool] = []
         for fmt in fmts:
-            ctools = FM.get_ctools_for(fmt)
-            ctool = FM.get_first_available_tool(ctools)
-            if not ctool:
+            tools = FM.get_tools_for(fmt, op)
+            tool = FM.get_first_available_tool(tools)
+            if not tool:
                 err_msg = (
-                        f'there is not tools that support "{fmt}" format '
-                        f'installed in the system. these tools can be {ctools}'
+                        f'there is not tools that support "{op!s}" with "{fmt}" format '
+                        f'installed in the system. these tools can be {tools}'
                         )
-                return CToolsManager.with_error(err_msg)
-            tools_found.append(ctool)
-        return CToolsManager(tools_found)
+                return ToolsManager.with_error(err_msg)
+            tools_found.append(tool)
+        return ToolsManager(tools_found, op)
 
     def set_inputs(self, inputs: FilesSrc) -> bool:
         if not self._can_run:
@@ -594,9 +554,6 @@ class CToolsManager:
 
     def _tool_can_handle_amount_inputs(self, tool: Tool) -> bool:
         assert self._inputs is not None
-        assert not isinstance(self._inputs, int), (
-                'if inputs is int it is treated as PIPE and PIPE is only '
-                'for connections')
         if isinstance(self._inputs, IO):
             return True
 
@@ -612,32 +569,37 @@ class CToolsManager:
             stream_flow = c.output.set_pipe()
             n.input.set(stream_flow)
 
+    def _build_tool_pipeline(self, tools: list[Tool]) -> str:
+        assert self._output is not None
+
+        if not self._inputs:
+            return 'Nothing was specified to operates on, we need some input'
+
+        if not self._tool_can_handle_amount_inputs(tools[0]):
+            return (
+                    f'multiple files was passed to operates on and the tool' 
+                    f' "{tools[0].name}" in "{self._op!s}" mode does not support'
+                    f' multiples files')
+
+        tools[0].input.set(self._inputs)
+        self._pipe_tools_together(tools)
+        tools[-1].output.set(self._output)
+        return ''
+
     def run(self) -> str:
         assert self._can_run
         assert self._output
         assert self._inputs is not None
 
-        if not self._inputs:
-            return 'You need to specify files to compress, None was specified'
-
         tools = self._tools
+        if self._op == Operation.DECOMPRESS:
+            tools.reverse()
+
+        err_msg = self._build_tool_pipeline(tools)
+        if err_msg: return err_msg
         
-        ftool = tools[0]
-        ltool = tools[-1]
-
-        if not self._tool_can_handle_amount_inputs(ftool):
-            return (
-                f'cannot compress multiple files because the first format used'
-                f' is {ftool.name}')
-
-        ftool.input.set(self._inputs)
-        self._pipe_tools_together(tools)
-        ltool.output.set(self._output)
-
-        for t in tools:
-            t.start()
-        for t in tools:
-            t.dispose()
+        for t in tools: t.start()
+        for t in tools: t.dispose()
         return ''
 
 # ####################
@@ -669,6 +631,7 @@ FM.add_exts(['tbzip2', 'tbz2'], [tar_fm, bzip2_fm])
 FM.add_exts(['gpg'], [gpg_fm])
 FM.add_exts(['zip'], [zip_fm])
 
+#Compression relations for format and tools
 FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
 FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 
@@ -769,7 +732,7 @@ def execute_compression(args: Namespace) -> int:
     if args.dry:
         return 0
 
-    tools_manager = CToolsManager.create_from_formats(fmts)
+    tools_manager = ToolsManager.create_from_formats(fmts, Operation.COMPRESS)
     tools_manager.set_inputs(args.files)
     tools_manager.set_output([output])
     err_msg = tools_manager.run()
@@ -808,8 +771,8 @@ def execute_decompression(args: Namespace) -> int:
     if args.dry:
         return 0
 
-    tools_manager = DToolsManager.create_from_formats(fmts)
-    tools_manager.set_input([file])
+    tools_manager = ToolsManager.create_from_formats(fmts, Operation.DECOMPRESS)
+    tools_manager.set_inputs([file])
     tools_manager.set_output([output])
     err_msg = tools_manager.run()
     if err_msg:
