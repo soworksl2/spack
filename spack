@@ -135,7 +135,8 @@ class FormatManager:
     def __init__(self) -> None:
         self._formats: list[Format] = []
         self._exts_formats: dict[str, list[Format]] = {}
-        self._cfmt_tool_rels: dict[Tuple[Format, ...], list[CTool]] = {}
+        self._cfmt_tool_rels: dict[Tuple[Format, ...], list[Tool]] = {}
+        self._dfmt_tool_rels: dict[Tuple[Format, ...], list[Tool]] = {}
 
     def add_format(self, fmt: str, category: FormatCategory) -> Format:
         f: Format = Format(fmt, category)
@@ -154,12 +155,21 @@ class FormatManager:
 
     def add_compress_format_tools_relation(self,
                                            fmts: Tuple[Format, ...],
-                                           tools: list['CTool']) -> None:
+                                           tools: list['Tool']) -> None:
         assert fmts
         assert tools
         assert not fmts in self._cfmt_tool_rels, 'fmts is assigned twice'
 
         self._cfmt_tool_rels[fmts] = tools
+
+    def add_decomress_format_tools_relation(self,
+                                            fmts: Tuple[Format, ...],
+                                            tools: list['Tool']) -> None:
+        assert fmts
+        assert tools
+        assert not fmts in self._dfmt_tool_rels, 'fmts is assigned twice'
+
+        self._dfmt_tool_rels[fmts] = tools
 
     def detect_formats(self, format_filename: str) -> list[Format]:
         format_filename = format_filename.strip()
@@ -193,17 +203,27 @@ class FormatManager:
         else:
             return fallback_filename
 
-    def get_ctools_for(self, fmt: Format) -> list['CTool']:
+    def get_ctools_for(self, fmt: Format) -> list['Tool']:
         #this is converted to a list because this would change fmt to a list
         #to get for example 7zip for [tar.gz]
         key = tuple([fmt])
         return self._cfmt_tool_rels.get(key, [])
 
-    def get_first_available_tool(self, tools: list['CTool']) -> Optional['CTool']:
+    def get_first_available_tool(self, tools: list['Tool']) -> Optional['Tool']:
         for tool in tools:
             if tool.is_available():
                 return tool
         return None
+
+    def get_first_available_dtool(self, tools: list['Tool']) -> Optional['Tool']:
+        for tool in tools:
+            if tool.is_available():
+                return tool
+        return None
+
+    def get_dtools_for(self, fmt: Format) -> list['Tool']:
+        key = tuple([fmt])
+        return self._dfmt_tool_rels.get(key, [])
 
 class InputTool:
     _tmps_id_counter: int = 0
@@ -345,7 +365,7 @@ class OutputTool:
             self._temp_stream.close()
         return True
 
-class CTool:
+class Tool:
     def __init__(self,
                  name: str,
                  cmd_args_gen: CmdArgsGen,
@@ -453,7 +473,7 @@ class CTool:
         self._input.dispose()
         self._output.dispose()
 
-def create_ctar() -> CTool:
+def create_ctar() -> Tool:
     def ctar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
         #TODO: tar support stdin but to pass a list of file to read
         #not implemented this yet but could be in the future
@@ -463,9 +483,9 @@ def create_ctar() -> CTool:
 
     input_spec = InputTool(Arity.INF, False)
     output_spec = OutputTool(Arity.ONE, True)
-    return CTool('tar', ctar_cmd_args_gen, input_spec, output_spec)
+    return Tool('tar', ctar_cmd_args_gen, input_spec, output_spec)
 
-def create_cgzip() -> CTool:
+def create_cgzip() -> Tool:
     def cgzip_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
         args = ['gzip', '--stdout']
         if args_input:
@@ -474,12 +494,61 @@ def create_cgzip() -> CTool:
 
     input_spec = InputTool(Arity.ONE, True)
     output_spec = OutputTool(Arity.ZERO, True)
-    return CTool('gzip', cgzip_cmd_args_gen, input_spec, output_spec)
+    return Tool('gzip', cgzip_cmd_args_gen, input_spec, output_spec)
+
+def create_dtar() -> Tool:
+    def dtar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
+        assert output is not None #this have to be checked, I am tired while writing this, if ok then delete this comment
+        return ['tar', '-xf', args_input[0], '-C', output]
+
+    input_spec = InputTool(Arity.ONE, False)
+    output_spec = OutputTool(Arity.ONE, False)
+    return Tool('tar', dtar_cmd_args_gen, input_spec, output_spec)
+
+class DToolsManager:
+    def __init__(self, tools: list[Tool], err_msg: str = '') -> None:
+        assert bool(tools) ^ bool(err_msg), 'specify the tools or err_msg. no both'
+        self._tools: list[Tool] = tools
+        self._err_msg: str = err_msg
+        self._inputs: Optional[FilesSrc] = None
+        self._output: Optional[FilesSrc] = None
+
+
+    @staticmethod
+    def with_error(err_msg: str) -> 'DToolsManager':
+        assert err_msg
+        return DToolsManager([], err_msg)
+
+    @staticmethod
+    def create_from_formats(fmts: list[Format]) -> 'DToolsManager':
+        assert fmts, 'you need to specify formats'
+        tools_found: list[Tool] = []
+        for fmt in fmts:
+            dtools = FM.get_dtools_for(fmt)
+            dtool = FM.get_first_available_dtool(dtools)
+            if not dtool:
+                err_msg = (
+                        f'there are no tools that support "{fmt}" format'
+                        f' installed in the system. these tools can be {dtools}'
+                        )
+                return DToolsManager.with_error(err_msg)
+            tools_found.append(dtool)
+        return DToolsManager(tools_found)
+
+    def set_input(self, input_: FilesSrc) -> None:
+        self._inputs = input_
+
+    def set_output(self, output: FilesSrc) -> None:
+        self._output = output
+
+    def run(self) -> str:
+        print(f'mira mis tools cagon: {self._tools}')
+        return ''
 
 class CToolsManager:
-    def __init__(self, tools: list[CTool], err_msg: str = '') -> None:
+    def __init__(self, tools: list[Tool], err_msg: str = '') -> None:
         assert bool(tools) ^ bool(err_msg), 'specify the tools or err_msg. no both'
-        self._tools: list[CTool] = tools
+        self._tools: list[Tool] = tools
         self._can_run: bool = not bool(err_msg)
         self._err_msg: str = err_msg
         self._inputs: Optional[FilesSrc] = None
@@ -492,7 +561,7 @@ class CToolsManager:
     @staticmethod
     def create_from_formats(fmts: list[Format]) -> 'CToolsManager':
         assert fmts, 'you need to specify formats'
-        tools_found: list[CTool] = []
+        tools_found: list[Tool] = []
         for fmt in fmts:
             ctools = FM.get_ctools_for(fmt)
             ctool = FM.get_first_available_tool(ctools)
@@ -523,7 +592,7 @@ class CToolsManager:
     def get_err(self) -> str:
         return self._err_msg
 
-    def _tool_can_handle_amount_inputs(self, tool: CTool) -> bool:
+    def _tool_can_handle_amount_inputs(self, tool: Tool) -> bool:
         assert self._inputs is not None
         assert not isinstance(self._inputs, int), (
                 'if inputs is int it is treated as PIPE and PIPE is only '
@@ -535,7 +604,7 @@ class CToolsManager:
                 tool.input.arity == Arity.ONE and
                 len(self._inputs) > 1)
 
-    def _pipe_tools_together(self, tools: list[CTool]) -> None:
+    def _pipe_tools_together(self, tools: list[Tool]) -> None:
         l = len(tools)
         for i in range(l - 1):
             c = tools[i]
@@ -602,6 +671,9 @@ FM.add_exts(['zip'], [zip_fm])
 
 FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
 FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
+
+#Decompression relations for format and tools
+FM.add_decomress_format_tools_relation((tar_fm,), [create_dtar()])
 
 # ####################
 # Argument Parser
@@ -735,6 +807,14 @@ def execute_decompression(args: Namespace) -> int:
         print_information(Operation.DECOMPRESS, output, fmts, args)
     if args.dry:
         return 0
+
+    tools_manager = DToolsManager.create_from_formats(fmts)
+    tools_manager.set_input([file])
+    tools_manager.set_output([output])
+    err_msg = tools_manager.run()
+    if err_msg:
+        err(err_msg)
+        return 1
 
     return 0
 
