@@ -162,7 +162,7 @@ class FormatManager:
 
         self._cfmt_tool_rels[fmts] = tools
 
-    def add_decomress_format_tools_relation(self,
+    def add_decompress_format_tools_relation(self,
                                             fmts: Tuple[Format, ...],
                                             tools: list['Tool']) -> None:
         assert fmts
@@ -644,8 +644,8 @@ FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
 FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 
 #Decompression relations for format and tools
-FM.add_decomress_format_tools_relation((tar_fm,), [create_dtar()])
-FM.add_decomress_format_tools_relation((gzip_fm,), [create_dgzip()])
+FM.add_decompress_format_tools_relation((tar_fm,), [create_dtar()])
+FM.add_decompress_format_tools_relation((gzip_fm,), [create_dgzip()])
 
 # ####################
 # Argument Parser
