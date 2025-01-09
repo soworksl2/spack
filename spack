@@ -499,6 +499,14 @@ def create_dtar() -> Tool:
     output_spec = OutputTool(Arity.ONE, False)
     return Tool('tar', dtar_cmd_args_gen, input_spec, output_spec)
 
+def create_dgzip() -> Tool:
+    def dgzip_cmd_args_gen(_: Optional[str], args_input: list[str]) -> list[str]:
+        return ['gzip', '-d', '--stdout', args_input[0]]
+
+    input_spec = InputTool(Arity.ONE, True)
+    output_spec = OutputTool(Arity.ZERO, True)
+    return Tool('gzip', dgzip_cmd_args_gen, input_spec, output_spec)
+
 class ToolsManager:
     def __init__(
             self,
@@ -637,6 +645,7 @@ FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 
 #Decompression relations for format and tools
 FM.add_decomress_format_tools_relation((tar_fm,), [create_dtar()])
+FM.add_decomress_format_tools_relation((gzip_fm,), [create_dgzip()])
 
 # ####################
 # Argument Parser
