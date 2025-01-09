@@ -500,6 +500,16 @@ def create_cxz() -> Tool:
     output_spec = OutputTool(Arity.ZERO, True)
     return Tool('xz', cxz_cmd_args_gen, input_spec, output_spec)
 
+def create_cbzip2() -> Tool:
+    def cbzip2_cmd_args_gen(_: Optional[str], args_input: list[str]) -> list[str]:
+        args = ['bzip2', '--stdout']
+        if args_input: args.append(args_input[0])
+        return args
+
+    input_spec = InputTool(Arity.ONE, True)
+    output_spec = OutputTool(Arity.ZERO, True)
+    return Tool('bzip2', cbzip2_cmd_args_gen, input_spec, output_spec)
+
 def create_dtar() -> Tool:
     def dtar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
         assert output is not None #this have to be checked, I am tired while writing this, if ok then delete this comment
@@ -528,6 +538,16 @@ def create_dxz() -> Tool:
     input_spec = InputTool(Arity.ONE, True)
     output_spec = OutputTool(Arity.ZERO, True)
     return Tool('xz', dxz_cmd_args_gen, input_spec, output_spec)
+
+def create_dbzip2() -> Tool:
+    def dbzip2_cmd_args_gen(_: Optional[str], args_input: list[str]) -> list[str]:
+        args = ['bzip2', '--decompress', '--stdout']
+        if args_input: args.append(args_input[0])
+        return args
+
+    input_spec = InputTool(Arity.ONE, True)
+    output_spec = OutputTool(Arity.ZERO, True)
+    return Tool('bzip2', dbzip2_cmd_args_gen, input_spec, output_spec)
 
 class ToolsManager:
     def __init__(
@@ -665,11 +685,13 @@ FM.add_exts(['zip'], [zip_fm])
 FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
 FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 FM.add_compress_format_tools_relation((xz_fm,), [create_cxz()])
+FM.add_compress_format_tools_relation((bzip2_fm,), [create_cbzip2()])
 
 #Decompression relations for format and tools
 FM.add_decompress_format_tools_relation((tar_fm,), [create_dtar()])
 FM.add_decompress_format_tools_relation((gzip_fm,), [create_dgzip()])
 FM.add_decompress_format_tools_relation((xz_fm,), [create_dxz()])
+FM.add_decompress_format_tools_relation((bzip2_fm,), [create_dbzip2()])
 
 # ####################
 # Argument Parser
