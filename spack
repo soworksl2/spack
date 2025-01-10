@@ -756,14 +756,6 @@ def title(title: str) -> None:
 def err(msg: str) -> None:
     print(f'ERROR: {msg}')
 
-def print_compression_information(args: Namespace, fmts_detected: list[Format]) -> None:
-    title('informative')
-    print(f'operation: compression')
-    print(f'output: {args.output}')
-    print(f'format used: {fmts_detected}')
-    print(f'is dry: {args.dry}')
-    print(f'files: {args.files}')
-
 def print_information(operation: Operation, output: str, fmts_detected: list[Format], args: Namespace) -> None:
     title('informative')
     print(f'operation: {operation!s}')
@@ -782,7 +774,7 @@ def execute_compression(args: Namespace) -> int:
     fmts = FM.detect_formats(format_filename)
 
     if args.informative:
-        print_compression_information(args, fmts)
+        print_information(Operation.COMPRESS, output, fmts, args)
 
     if args.dry:
         return 0
