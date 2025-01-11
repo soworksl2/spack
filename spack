@@ -519,6 +519,9 @@ def create_czip() -> Tool:
     output_spec = OutputTool(Arity.ONE, True)
     return Tool('zip', czip_cmd_args_gen, input_spec, output_spec)
 
+def create_crar() -> Tool:
+    raise NotImplementedError('rar is tricky because it is not free software and not all linux distro package it')
+
 
 def create_dtar() -> Tool:
     def dtar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
@@ -568,6 +571,17 @@ def create_dzip() -> Tool:
     input_spec = InputTool(Arity.ONE, True)
     output_spec = OutputTool(Arity.ONE, False)
     return Tool('zip', dzip_cmd_args_gen, input_spec, output_spec, 'unzip')
+
+def create_dunrar() -> Tool:
+    def dunrar_cmd_args_gen(output: Optional[str], args_input: list[str]) -> list[str]:
+        assert output is not None
+        output = output + '/' if not output.endswith('/') else output
+        args = ['unrar', 'x', args_input[0], output]
+        return args
+
+    input_spec = InputTool(Arity.ONE, False)
+    output_spec = OutputTool(Arity.ONE, False)
+    return Tool('rar', dunrar_cmd_args_gen, input_spec, output_spec, 'unrar')
 
 class ToolsManager:
     def __init__(
@@ -690,6 +704,7 @@ xz_fm: Format = FM.add_format('xz', FormatCategory.COMPRESING)
 bzip2_fm: Format = FM.add_format('bzip2', FormatCategory.COMPRESING)
 gpg_fm: Format = FM.add_format('gpg', FormatCategory.ENCRYPTING)
 zip_fm: Format = FM.add_format('zip', FormatCategory.ALL)
+rar_fm: Format = FM.add_format('rar', FormatCategory.ALL)
 
 FM.add_exts(['tar'], [tar_fm])
 FM.add_exts(['gzip', 'gz', 'z'], [gzip_fm])
@@ -700,6 +715,7 @@ FM.add_exts(['bzip2', 'bz2'], [bzip2_fm])
 FM.add_exts(['tbzip2', 'tbz2'], [tar_fm, bzip2_fm])
 FM.add_exts(['gpg'], [gpg_fm])
 FM.add_exts(['zip'], [zip_fm])
+FM.add_exts(['rar'], [rar_fm])
 
 #Compression relations for format and tools
 FM.add_compress_format_tools_relation((tar_fm,), [create_ctar()])
@@ -707,6 +723,7 @@ FM.add_compress_format_tools_relation((gzip_fm,), [create_cgzip()])
 FM.add_compress_format_tools_relation((xz_fm,), [create_cxz()])
 FM.add_compress_format_tools_relation((bzip2_fm,), [create_cbzip2()])
 FM.add_compress_format_tools_relation((zip_fm,), [create_czip()])
+#FM.add_compress_format_tools_relation((rar_fm,), [create_crar()]) #NOT IMPLEMENTED YET
 
 #Decompression relations for format and tools
 FM.add_decompress_format_tools_relation((tar_fm,), [create_dtar()])
@@ -714,6 +731,7 @@ FM.add_decompress_format_tools_relation((gzip_fm,), [create_dgzip()])
 FM.add_decompress_format_tools_relation((xz_fm,), [create_dxz()])
 FM.add_decompress_format_tools_relation((bzip2_fm,), [create_dbzip2()])
 FM.add_decompress_format_tools_relation((zip_fm,), [create_dzip()])
+FM.add_decompress_format_tools_relation((rar_fm,), [create_dunrar()])
 
 # ####################
 # Argument Parser
