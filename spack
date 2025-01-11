@@ -376,6 +376,9 @@ class Tool:
 
         self._current_process: Optional[Popen[bytes]] = None
 
+    def __str__(self) -> str:
+        return self._tool_name
+
     @property
     def name(self) -> str:
         return self._name
@@ -593,7 +596,6 @@ class ToolsManager:
         
         self._op: Operation = op
         self._tools: list[Tool] = tools
-        self._can_run: bool = not bool(err_msg)
         self._err_msg: str = err_msg
         self._inputs: Optional[FilesSrc] = None
         self._output: Optional[FilesSrc] = None
@@ -611,29 +613,22 @@ class ToolsManager:
             tool = FM.get_first_available_tool(tools)
             if not tool:
                 err_msg = (
-                        f'there is not tools that support "{op!s}" with "{fmt}" format '
-                        f'installed in the system. these tools can be {tools}'
+                        f'there are not tools that support "{op!s}" with "{fmt}" format '
+                        f'installed in the system. these tools can be {[str(t) for t in tools]}'
                         )
                 return ToolsManager.with_error(err_msg)
             tools_found.append(tool)
         return ToolsManager(tools_found, op)
 
-    def set_inputs(self, inputs: FilesSrc) -> bool:
-        if not self._can_run:
-            return False
-
+    def set_inputs(self, inputs: FilesSrc) -> None:
         self._inputs = inputs
-        return True
 
     def set_output(self, output: FilesSrc) -> None:
         assert isinstance(output, list) and len(output) == 1
         self._output = output
 
     @property
-    def can_run(self) -> bool:
-        return self._can_run
-
-    def get_err(self) -> str:
+    def err_msg(self) -> str:
         return self._err_msg
 
     def _tool_can_handle_amount_inputs(self, tool: Tool) -> bool:
@@ -671,9 +666,11 @@ class ToolsManager:
         return ''
 
     def run(self) -> str:
-        assert self._can_run
         assert self._output
         assert self._inputs is not None
+
+        if self._err_msg:
+            return self._err_msg
 
         tools = self._tools
         if self._op == Operation.DECOMPRESS:
