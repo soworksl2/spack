@@ -710,7 +710,7 @@ class ToolsManager:
 
 PROG_NAME = 'spack'
 PROG_DESC = 'A tool to unify all archiving, compressing, encription tools'
-PROG_VERSION = '0.0.1'
+PROG_VERSION = '0.1.0'
 PROG_REPOSITORY = 'https://github.com/soworksl2/spack'
 
 TMP_DIR = '/var/tmp/spack_tmps'
